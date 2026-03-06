@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Subtitle to Voice - D Lab</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+<style>
+*{
+margin:0;
+padding:0;
+box-sizing:border-box;
+font-family:'Poppins',sans-serif;
+}
+
+body{
+min-height:100vh;
+background:linear-gradient(135deg,#000000,#0f2027,#203a43);
+color:#fff;
+}
+
+.navbar{
+height:70px;
+display:flex;
+justify-content:space-between;
+align-items:center;
+padding:0 40px;
+background:rgba(255,255,255,0.05);
+backdrop-filter:blur(10px);
+}
+
+.logo{
+display:flex;
+align-items:center;
+}
+
+.logo img{
+max-height:90px;
+width:auto;
+object-fit:contain;
+}
+
+.back{
+text-decoration:none;
+color:#00f2fe;
+font-weight:500;
+}
+
+.container{
+max-width:900px;
+margin:40px auto;
+padding:20px;
+}
+
+.card{
+background:rgba(255,255,255,0.05);
+backdrop-filter:blur(15px);
+padding:40px;
+border-radius:15px;
+box-shadow:0 0 30px rgba(0,255,255,0.15);
+margin-bottom:30px;
+}
+
+h2{
+margin-bottom:20px;
+font-weight:500;
+}
+
+.upload-box{
+border:2px dashed #00f2fe;
+padding:40px;
+text-align:center;
+border-radius:12px;
+margin-bottom:20px;
+}
+
+.voice-select{
+margin-bottom:20px;
+text-align:center;
+}
+
+select{
+padding:10px;
+border-radius:8px;
+border:none;
+font-size:14px;
+}
+
+button{
+padding:12px 25px;
+border-radius:8px;
+border:none;
+background:linear-gradient(90deg,#00f2fe,#4facfe);
+color:#000;
+font-weight:600;
+cursor:pointer;
+}
+
+.result-section{
+margin-top:20px;
+}
+
+.text-output{
+background:rgba(255,255,255,0.08);
+padding:20px;
+border-radius:10px;
+max-height:250px;
+overflow-y:auto;
+font-size:14px;
+line-height:1.6;
+}
+
+audio{
+width:100%;
+margin-top:10px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="navbar">
+<div class="logo">
+<img src="{{ url_for('static', filename='aiRat_1.webp') }}">
+<b>AI Rat</b>
+</div>
+<a href="/logout" class="back">Logout</a>
+</div>
+
+<div class="container">
+
+<div class="card">
+
+<h2>Subtitle to Voice Tool 🎙</h2>
+
+<form action="/subtitle-to-voice" method="POST" enctype="multipart/form-data">
+
+<div class="voice-select">
+<label style="font-size:25px;">Select Voice:</label>
+
+&nbsp 
+<select name="voice" required>
+<option disabled selected>Select Voice</option>
+
+<option value="en_GB-alan-medium">Alan</option>
+<option value="en_US-bryce-medium">Bryce</option>
+<option value="en_US-danny-low">Danny</option>
+<option value="en_US-hfc_male-medium">Hfc</option>
+<option value="en_US-joe-medium">Joe</option>
+<option value="en_US-john-medium">John</option>
+<option value="en_US-kusal-medium">Kusal</option>
+<option value="en_US-norman-medium">Norman</option>
+
+<option value="en_US-sam-medium">Sam</option>
+</select>
+
+</div>
+
+<div class="upload-box">
+<p>Upload your .SRT subtitle file</p>
+<input type="file" name="subtitle_file" accept=".srt" required>
+</div>
+
+<div style="text-align:center;">
+<button type="submit">Generate Voice</button>
+</div>
+
+</form>
+
+</div>
+
+{% if extracted_text %}
+<div class="card result-section">
+<h3>Extracted Text</h3>
+<div class="text-output">
+{{ extracted_text }}
+</div>
+</div>
+{% endif %}
+
+{% if audio_file %}
+<div class="card result-section">
+
+<h3>Generated Audio</h3>
+
+<audio controls>
+<source src="{{ url_for('static', filename=audio_file) }}" type="audio/wav">
+</audio>
+
+<br><br>
+
+<a href="{{ url_for('static', filename=audio_file) }}" download>
+<button>Download Audio</button>
+</a>
+
+</div>
+{% endif %}
+
+</div>
+
+</body>
+</html>
