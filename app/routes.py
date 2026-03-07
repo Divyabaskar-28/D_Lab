@@ -3,9 +3,9 @@ from flask_login import login_user, login_required, logout_user, current_user
 from .models import User
 from . import db
 
-import subprocess
 import os
 import re
+from gtts import gTTS  # Free TTS
 from pydub import AudioSegment
 
 main = Blueprint("main", __name__)
@@ -19,14 +19,11 @@ def home():
 # ---------------- SIGNUP ----------------
 @main.route("/signup", methods=["GET", "POST"])
 def signup():
-
     if request.method == "POST":
-
         email = request.form.get("email")
         password = request.form.get("password")
 
         existing_user = User.query.filter_by(email=email).first()
-
         if existing_user:
             return "User already exists"
 
@@ -44,16 +41,12 @@ def signup():
 # ---------------- LOGIN ----------------
 @main.route("/login", methods=["GET", "POST"])
 def login():
-
     if request.method == "POST":
-
         email = request.form.get("email")
         password = request.form.get("password")
 
         user = User.query.filter_by(email=email).first()
-
         if user and user.check_password(password):
-
             login_user(user)
             return redirect(url_for("main.dashboard"))
 
@@ -75,102 +68,45 @@ def dashboard():
 def subtitle_to_voice():
 
     if request.method == "POST":
-
         file = request.files.get("subtitle_file")
-        voice = request.form.get("voice")
+        voice = request.form.get("voice", "en")  # default gTTS voice
 
-        if not voice:
-            voice = "en_US-joe-medium"
+        if not file:
+            return "No subtitle file uploaded", 400
 
-        if file:
+        # Read SRT content
+        content = file.read().decode("utf-8")
 
-            content = file.read().decode("utf-8")
+        # Extract text ignoring timestamps and numbers
+        pattern = re.compile(
+            r"\d+\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n(.+?)(?=\n\d+\n|\Z)",
+            re.DOTALL
+        )
+        matches = pattern.findall(content)
 
-            pattern = re.compile(
-                r"\d+\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n(.+?)(?=\n\d+\n|\Z)",
-                re.DOTALL
-            )
+        extracted_full_text = []
+        full_text_for_tts = ""
 
-            matches = pattern.findall(content)
+        for _, _, text in matches:
+            clean_text = text.replace("\n", " ").strip()
+            extracted_full_text.append(clean_text)
+            full_text_for_tts += clean_text + " "
 
-            final_audio = AudioSegment.silent(duration=0)
+        if not full_text_for_tts.strip():
+            return "No text found in subtitle", 400
 
-            def time_to_ms(timestamp):
-                h, m, s = timestamp.split(":")
-                sec, ms = s.split(",")
+        # Generate audio using gTTS
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        output_path = os.path.join(base_dir, "static", "voices", "output.mp3")
 
-                return (
-                    int(h) * 3600000 +
-                    int(m) * 60000 +
-                    int(sec) * 1000 +
-                    int(ms)
-                )
+        tts = gTTS(text=full_text_for_tts, lang="en")
+        tts.save(output_path)
 
-            extracted_full_text = []
-
-            for start, end, text in matches:
-
-                text = text.replace("\n", " ").strip()
-                extracted_full_text.append(text)
-
-                start_ms = time_to_ms(start)
-                end_ms = time_to_ms(end)
-
-                subtitle_duration = end_ms - start_ms
-
-                # ---------- PIPER TTS ----------
-                voice_model = os.path.join(
-                "app", "static", "voices", f"{voice}.onnx"
-            )
-                temp_file = os.path.join("app", "static", "temp.wav")
-
-                cmd = [
-                    "piper",
-                    "--model",
-                    voice_model,
-                    "--output_file",
-                    temp_file
-                ]
-
-                result = subprocess.run(
-                    cmd,
-                    input=text.encode("utf-8"),
-                    capture_output=True
-                )
-
-                if result.returncode != 0:
-                    print("Piper Error:", result.stderr.decode())
-                    return "Piper failed to generate audio"
-
-                if not os.path.exists(temp_file):
-                    return "Audio file not created"
-
-                audio_segment = AudioSegment.from_file(temp_file, format="wav")
-
-                os.remove(temp_file)
-
-                # Adjust subtitle timing
-                if len(audio_segment) > subtitle_duration:
-                    audio_segment = audio_segment[:subtitle_duration]
-
-                elif len(audio_segment) < subtitle_duration:
-                    silence_needed = subtitle_duration - len(audio_segment)
-                    audio_segment += AudioSegment.silent(duration=silence_needed)
-
-                if start_ms > len(final_audio):
-                    silence = AudioSegment.silent(duration=start_ms - len(final_audio))
-                    final_audio += silence
-
-                final_audio += audio_segment
-
-            output_path = os.path.join("app", "static", "output.wav")
-            final_audio.export(output_path, format="wav")
-
-            return render_template(
-                "subtitle.html",
-                extracted_text=" ".join(extracted_full_text),
-                audio_file="output.wav"
-            )
+        return render_template(
+            "subtitle.html",
+            extracted_text=" ".join(extracted_full_text),
+            audio_file="voices/output.mp3"
+        )
 
     return render_template("subtitle.html")
 
@@ -179,7 +115,5 @@ def subtitle_to_voice():
 @main.route("/logout")
 @login_required
 def logout():
-
     logout_user()
-
     return redirect(url_for("main.login"))

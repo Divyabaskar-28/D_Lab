@@ -1,6 +1,6 @@
-flask
-flask-login
-flask-sqlalchemy
+Flask
+Flask-Login
+Flask-SQLAlchemy
 pydub
-werkzeug
 gunicorn
+gTTS
