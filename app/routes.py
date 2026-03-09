@@ -6,10 +6,13 @@ from . import db
 import os
 import re
 from gtts import gTTS
+import platform
 from pydub import AudioSegment
 
-# -------- IMPORTANT FIX FOR RENDER --------
-AudioSegment.converter = "/usr/bin/ffmpeg"
+if platform.system() == "Windows":
+    AudioSegment.converter = "ffmpeg"
+else:
+    AudioSegment.converter = "/usr/bin/ffmpeg"
 
 main = Blueprint("main", __name__)
 
