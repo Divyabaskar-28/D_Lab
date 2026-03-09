@@ -8,6 +8,9 @@ import re
 from gtts import gTTS
 from pydub import AudioSegment
 
+# -------- IMPORTANT FIX FOR RENDER --------
+AudioSegment.converter = "/usr/bin/ffmpeg"
+
 main = Blueprint("main", __name__)
 
 
