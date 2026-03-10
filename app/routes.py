@@ -28,6 +28,7 @@ def home():
 @main.route("/signup", methods=["GET", "POST"])
 def signup():
     if request.method == "POST":
+
         email = request.form.get("email")
         password = request.form.get("password")
 
@@ -73,14 +74,14 @@ def dashboard():
     return render_template("dashboard.html", email=current_user.email)
 
 
-# ----------- TIME CONVERT FUNCTION -----------
+# -------- TIME CONVERT FUNCTION --------
 def srt_time_to_ms(time_str):
     h, m, s_ms = time_str.split(":")
     s, ms = s_ms.split(",")
-    return (int(h) * 3600 + int(m) * 60 + int(s)) * 1000 + int(ms)
+    return (int(h)*3600 + int(m)*60 + int(s))*1000 + int(ms)
 
 
-# ----------- EDGE TTS FUNCTION -----------
+# -------- EDGE TTS FUNCTION --------
 async def generate_voice(text, voice, path):
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(path)
@@ -124,7 +125,6 @@ def subtitle_to_voice():
 
             clean_text = text.replace("\n", " ").strip()
 
-            # skip empty subtitle
             if clean_text == "":
                 continue
 
@@ -135,16 +135,29 @@ def subtitle_to_voice():
 
             subtitle_duration = end_ms - start_ms
 
-            temp_path = os.path.join(voices_dir, "temp.mp3")
+            # unique temp file
+            temp_path = os.path.join(voices_dir, f"temp_{start_ms}.mp3")
 
-            # EDGE TTS GENERATE
             try:
                 asyncio.run(generate_voice(clean_text, voice, temp_path))
             except Exception as e:
                 print("TTS error:", e)
                 continue
 
+            # check file exists
+            if not os.path.exists(temp_path):
+                print("Temp audio not found")
+                continue
+
+            if os.path.getsize(temp_path) == 0:
+                print("Empty audio generated")
+                continue
+
             speech = AudioSegment.from_mp3(temp_path)
+
+            if len(speech) == 0:
+                print("Speech duration zero")
+                continue
 
             # add silence until subtitle start
             if len(final_audio) < start_ms:
@@ -153,11 +166,9 @@ def subtitle_to_voice():
 
             speech_duration = len(speech)
 
-            # trim speech if longer than subtitle
             if speech_duration > subtitle_duration:
                 speech = speech[:subtitle_duration]
 
-            # add silence if shorter
             elif speech_duration < subtitle_duration:
                 silence_needed = subtitle_duration - speech_duration
                 speech += AudioSegment.silent(duration=silence_needed)
