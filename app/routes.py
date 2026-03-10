@@ -77,7 +77,7 @@ def dashboard():
 def srt_time_to_ms(time_str):
     h, m, s_ms = time_str.split(":")
     s, ms = s_ms.split(",")
-    return (int(h)*3600 + int(m)*60 + int(s)) * 1000 + int(ms)
+    return (int(h) * 3600 + int(m) * 60 + int(s)) * 1000 + int(ms)
 
 
 # ----------- EDGE TTS FUNCTION -----------
@@ -122,12 +122,14 @@ def subtitle_to_voice():
 
         for start, end, text in matches:
 
-           clean_text = text.replace("\n", " ").strip()
+            clean_text = text.replace("\n", " ").strip()
 
-if clean_text == "":
-    continue
+            # skip empty subtitle
+            if clean_text == "":
+                continue
 
-extracted_text_list.append(clean_text)
+            extracted_text_list.append(clean_text)
+
             start_ms = srt_time_to_ms(start)
             end_ms = srt_time_to_ms(end)
 
@@ -136,14 +138,15 @@ extracted_text_list.append(clean_text)
             temp_path = os.path.join(voices_dir, "temp.mp3")
 
             # EDGE TTS GENERATE
-           try:
-    asyncio.run(generate_voice(clean_text, voice, temp_path))
-except Exception as e:
-    print("TTS error:", e)
-    continue
+            try:
+                asyncio.run(generate_voice(clean_text, voice, temp_path))
+            except Exception as e:
+                print("TTS error:", e)
+                continue
+
             speech = AudioSegment.from_mp3(temp_path)
 
-            # add silence until start
+            # add silence until subtitle start
             if len(final_audio) < start_ms:
                 silence = AudioSegment.silent(duration=start_ms - len(final_audio))
                 final_audio += silence
@@ -154,7 +157,7 @@ except Exception as e:
             if speech_duration > subtitle_duration:
                 speech = speech[:subtitle_duration]
 
-            # add silence if speech shorter
+            # add silence if shorter
             elif speech_duration < subtitle_duration:
                 silence_needed = subtitle_duration - speech_duration
                 speech += AudioSegment.silent(duration=silence_needed)
