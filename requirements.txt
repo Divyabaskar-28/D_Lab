@@ -3,4 +3,5 @@ Flask-Login
 Flask-SQLAlchemy
 edge-tts
 pydub
+pyaudioop
 gunicorn
