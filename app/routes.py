@@ -5,10 +5,12 @@ from . import db
 
 import os
 import re
-from gtts import gTTS
+import asyncio
 import platform
+import edge_tts
 from pydub import AudioSegment
 
+# ffmpeg setup
 if platform.system() == "Windows":
     AudioSegment.converter = "ffmpeg"
 else:
@@ -78,6 +80,12 @@ def srt_time_to_ms(time_str):
     return (int(h)*3600 + int(m)*60 + int(s)) * 1000 + int(ms)
 
 
+# ----------- EDGE TTS FUNCTION -----------
+async def generate_voice(text, voice, path):
+    communicate = edge_tts.Communicate(text, voice)
+    await communicate.save(path)
+
+
 # ---------------- SUBTITLE TO VOICE ----------------
 @main.route("/subtitle-to-voice", methods=["GET", "POST"])
 @login_required
@@ -86,7 +94,7 @@ def subtitle_to_voice():
     if request.method == "POST":
 
         file = request.files.get("subtitle_file")
-        voice = request.form.get("voice", "en")
+        voice = request.form.get("voice")
 
         if not file:
             return "No subtitle file uploaded", 400
@@ -122,11 +130,10 @@ def subtitle_to_voice():
 
             subtitle_duration = end_ms - start_ms
 
-            # Generate speech
-            tts = gTTS(text=clean_text, lang=voice)
-
             temp_path = os.path.join(voices_dir, "temp.mp3")
-            tts.save(temp_path)
+
+            # EDGE TTS GENERATE
+            asyncio.run(generate_voice(clean_text, voice, temp_path))
 
             speech = AudioSegment.from_mp3(temp_path)
 

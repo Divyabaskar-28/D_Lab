@@ -1,7 +1,6 @@
 Flask
 Flask-Login
 Flask-SQLAlchemy
-gTTS
+edge-tts
 pydub
 gunicorn
-audioop-lts
