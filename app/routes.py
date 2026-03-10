@@ -122,9 +122,12 @@ def subtitle_to_voice():
 
         for start, end, text in matches:
 
-            clean_text = text.replace("\n", " ").strip()
-            extracted_text_list.append(clean_text)
+           clean_text = text.replace("\n", " ").strip()
 
+if clean_text == "":
+    continue
+
+extracted_text_list.append(clean_text)
             start_ms = srt_time_to_ms(start)
             end_ms = srt_time_to_ms(end)
 
@@ -133,8 +136,11 @@ def subtitle_to_voice():
             temp_path = os.path.join(voices_dir, "temp.mp3")
 
             # EDGE TTS GENERATE
-            asyncio.run(generate_voice(clean_text, voice, temp_path))
-
+           try:
+    asyncio.run(generate_voice(clean_text, voice, temp_path))
+except Exception as e:
+    print("TTS error:", e)
+    continue
             speech = AudioSegment.from_mp3(temp_path)
 
             # add silence until start
