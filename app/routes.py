@@ -102,12 +102,17 @@ def subtitle_to_voice():
 
         content = file.read().decode("utf-8")
 
+        # 🔥 FIX: handle Windows line endings
+        content = content.replace("\r\n", "\n")
+
         pattern = re.compile(
             r"\d+\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n(.+?)(?=\n\d+\n|\Z)",
             re.DOTALL
         )
 
         matches = pattern.findall(content)
+
+        print("MATCHES COUNT:", len(matches))  # DEBUG
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
         voices_dir = os.path.join(base_dir, "static", "voices")
@@ -123,6 +128,9 @@ def subtitle_to_voice():
 
         for start, end, text in matches:
 
+            print("START:", start, "END:", end)
+            print("TEXT:", text)
+
             clean_text = text.replace("\n", " ").strip()
 
             if clean_text == "":
@@ -135,16 +143,19 @@ def subtitle_to_voice():
 
             subtitle_duration = end_ms - start_ms
 
-            # unique temp file
             temp_path = os.path.join(voices_dir, f"temp_{start_ms}.mp3")
 
             try:
-                asyncio.run(generate_voice(clean_text, voice, temp_path))
+                # 🔥 FIX: proper asyncio handling
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(generate_voice(clean_text, voice, temp_path))
+                loop.close()
+
             except Exception as e:
                 print("TTS error:", e)
                 continue
 
-            # check file exists
             if not os.path.exists(temp_path):
                 print("Temp audio not found")
                 continue
@@ -159,7 +170,7 @@ def subtitle_to_voice():
                 print("Speech duration zero")
                 continue
 
-            # add silence until subtitle start
+            # add silence before start
             if len(final_audio) < start_ms:
                 silence = AudioSegment.silent(duration=start_ms - len(final_audio))
                 final_audio += silence
@@ -174,6 +185,10 @@ def subtitle_to_voice():
                 speech += AudioSegment.silent(duration=silence_needed)
 
             final_audio += speech
+
+        # 🔥 IMPORTANT CHECK
+        if len(final_audio) == 0:
+            return "Audio generation failed - check SRT or voice", 500
 
         final_audio.export(output_path, format="mp3")
 
