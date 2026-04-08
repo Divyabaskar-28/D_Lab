@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, redirect, url_for, request
+from flask import Blueprint, render_template, redirect, url_for, request, jsonify
 from flask_login import login_user, login_required, logout_user, current_user
 from .models import User
 from . import db
@@ -7,6 +7,7 @@ import os
 import re
 import asyncio
 import platform
+import time
 import edge_tts
 from pydub import AudioSegment
 
@@ -18,28 +19,32 @@ else:
 
 main = Blueprint("main", __name__)
 
+progress_data = {"percent": 0}
+
+
+@main.route("/progress")
+def progress():
+    return jsonify(progress_data)
+
 
 @main.route("/")
 def home():
     return redirect(url_for("main.login"))
 
 
-# ---------------- SIGNUP ----------------
+# ---------------- AUTH ----------------
 @main.route("/signup", methods=["GET", "POST"])
 def signup():
     if request.method == "POST":
-
         email = request.form.get("email")
         password = request.form.get("password")
 
-        existing_user = User.query.filter_by(email=email).first()
-        if existing_user:
+        if User.query.filter_by(email=email).first():
             return "User already exists"
 
-        new_user = User(email=email)
-        new_user.set_password(password)
-
-        db.session.add(new_user)
+        user = User(email=email)
+        user.set_password(password)
+        db.session.add(user)
         db.session.commit()
 
         return redirect(url_for("main.login"))
@@ -47,12 +52,9 @@ def signup():
     return render_template("signup.html")
 
 
-# ---------------- LOGIN ----------------
 @main.route("/login", methods=["GET", "POST"])
 def login():
-
     if request.method == "POST":
-
         email = request.form.get("email")
         password = request.form.get("password")
 
@@ -67,32 +69,52 @@ def login():
     return render_template("login.html")
 
 
-# ---------------- DASHBOARD ----------------
 @main.route("/dashboard")
 @login_required
 def dashboard():
     return render_template("dashboard.html", email=current_user.email)
 
 
-# -------- TIME CONVERT FUNCTION --------
+# -------- TIME --------
 def srt_time_to_ms(time_str):
     h, m, s_ms = time_str.split(":")
     s, ms = s_ms.split(",")
     return (int(h)*3600 + int(m)*60 + int(s))*1000 + int(ms)
 
 
-# -------- EDGE TTS FUNCTION --------
+# -------- EDGE TTS --------
 async def generate_voice(text, voice, path):
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(path)
 
 
-# ---------------- SUBTITLE TO VOICE ----------------
+# -------- GROUP SUBTITLES --------
+def group_subtitles(matches, chunk_size=5):
+    grouped = []
+    chunk = []
+
+    for m in matches:
+        if m[2].strip():
+            chunk.append(m)
+
+        if len(chunk) == chunk_size:
+            grouped.append(chunk)
+            chunk = []
+
+    if chunk:
+        grouped.append(chunk)
+
+    return grouped
+
+
+# ---------------- MAIN FEATURE ----------------
 @main.route("/subtitle-to-voice", methods=["GET", "POST"])
 @login_required
 def subtitle_to_voice():
 
     if request.method == "POST":
+
+        progress_data["percent"] = 0
 
         file = request.files.get("subtitle_file")
         voice = request.form.get("voice")
@@ -100,10 +122,7 @@ def subtitle_to_voice():
         if not file:
             return "No subtitle file uploaded", 400
 
-        content = file.read().decode("utf-8")
-
-        # 🔥 FIX: handle Windows line endings
-        content = content.replace("\r\n", "\n")
+        content = file.read().decode("utf-8").replace("\r\n", "\n")
 
         pattern = re.compile(
             r"\d+\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n(.+?)(?=\n\d+\n|\Z)",
@@ -112,94 +131,105 @@ def subtitle_to_voice():
 
         matches = pattern.findall(content)
 
-        print("MATCHES COUNT:", len(matches))  # DEBUG
+        grouped_matches = group_subtitles(matches, chunk_size=5)
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
         voices_dir = os.path.join(base_dir, "static", "voices")
 
-        if not os.path.exists(voices_dir):
-            os.makedirs(voices_dir)
+        os.makedirs(voices_dir, exist_ok=True)
 
         output_path = os.path.join(voices_dir, "output.mp3")
 
-        final_audio = AudioSegment.silent(duration=0)
+        if os.path.exists(output_path):
+            os.remove(output_path)
 
+        final_audio = AudioSegment.silent(duration=0)
         extracted_text_list = []
 
-        for start, end, text in matches:
+        total = len(grouped_matches)
+        processed = 0
 
-            print("START:", start, "END:", end)
-            print("TEXT:", text)
+        for i, group in enumerate(grouped_matches):
 
-            clean_text = text.replace("\n", " ").strip()
+            combined_text = " ".join([g[2].replace("\n", " ") for g in group])
+            start_ms = srt_time_to_ms(group[0][0])
+            end_ms = srt_time_to_ms(group[-1][1])
+            duration = end_ms - start_ms
 
-            if clean_text == "":
+            extracted_text_list.append(combined_text)
+
+            temp_path = os.path.join(voices_dir, f"temp_{i}.mp3")
+
+            success = False
+
+            for attempt in range(3):
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(generate_voice(combined_text, voice, temp_path))
+                    loop.close()
+
+                    if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                        success = True
+                        break
+
+                except Exception as e:
+                    print("Retry error:", e)
+                    time.sleep(1)
+
+            if not success:
                 continue
 
-            extracted_text_list.append(clean_text)
+            # ✅ FIX: avoid PermissionError
+            # 🔥 ensure file exists and valid
+            if not os.path.exists(temp_path) or os.path.getsize(temp_path) < 1000:
+                print("Invalid audio skipped:", combined_text)
+                continue
 
-            start_ms = srt_time_to_ms(start)
-            end_ms = srt_time_to_ms(end)
-
-            subtitle_duration = end_ms - start_ms
-
-            temp_path = os.path.join(voices_dir, f"temp_{start_ms}.mp3")
+            time.sleep(0.5)  # 🔥 wait for file write complete
 
             try:
-                # 🔥 FIX: proper asyncio handling
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(generate_voice(clean_text, voice, temp_path))
-                loop.close()
-
+                speech = AudioSegment.from_mp3(temp_path)
             except Exception as e:
-                print("TTS error:", e)
+                print("Decode error, skipping:", e)
                 continue
 
-            if not os.path.exists(temp_path):
-                print("Temp audio not found")
-                continue
+            # 🔥 safe delete
+            try:
+                os.remove(temp_path)
+            except:
+                pass
 
-            if os.path.getsize(temp_path) == 0:
-                print("Empty audio generated")
-                continue
-
-            speech = AudioSegment.from_mp3(temp_path)
-
-            if len(speech) == 0:
-                print("Speech duration zero")
-                continue
-
-            # add silence before start
             if len(final_audio) < start_ms:
-                silence = AudioSegment.silent(duration=start_ms - len(final_audio))
-                final_audio += silence
+                final_audio += AudioSegment.silent(start_ms - len(final_audio))
 
-            speech_duration = len(speech)
-
-            if speech_duration > subtitle_duration:
-                speech = speech[:subtitle_duration]
-
-            elif speech_duration < subtitle_duration:
-                silence_needed = subtitle_duration - speech_duration
-                speech += AudioSegment.silent(duration=silence_needed)
+            if len(speech) > duration:
+                speech = speech[:duration]
+            else:
+                speech += AudioSegment.silent(duration - len(speech))
 
             final_audio += speech
 
-        # 🔥 IMPORTANT CHECK
-        if len(final_audio) == 0:
-            return "Audio generation failed - check SRT or voice", 500
+            processed += 1
+            progress_data["percent"] = int((processed / total) * 100)
+
+        progress_data["percent"] = 100
+
+        if len(final_audio) < 1000:
+            return "Audio generation failed ❌", 500
 
         final_audio.export(output_path, format="mp3")
 
+        # ✅ FIX: retain selected voice
         return render_template(
             "subtitle.html",
             extracted_text=" ".join(extracted_text_list),
-            audio_file="voices/output.mp3"
+            audio_file="voices/output.mp3",
+            selected_voice=voice
         )
 
     return render_template("subtitle.html")
-
+    
 
 # ---------------- LOGOUT ----------------
 @main.route("/logout")
