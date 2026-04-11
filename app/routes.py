@@ -20,11 +20,20 @@ else:
 main = Blueprint("main", __name__)
 
 progress_data = {"percent": 0}
+cancel_flag = {"stop": False}
 
 
+# ---------------- PROGRESS ----------------
 @main.route("/progress")
 def progress():
     return jsonify(progress_data)
+
+
+# ---------------- CANCEL ----------------
+@main.route("/cancel", methods=["POST"])
+def cancel():
+    cancel_flag["stop"] = True
+    return jsonify({"status": "cancelled"})
 
 
 @main.route("/")
@@ -88,8 +97,8 @@ async def generate_voice(text, voice, path):
     await communicate.save(path)
 
 
-# -------- GROUP SUBTITLES --------
-def group_subtitles(matches, chunk_size=5):
+# -------- GROUP --------
+def group_subtitles(matches, chunk_size=1):  # 🔥 IMPORTANT: 1 for perfect sync
     grouped = []
     chunk = []
 
@@ -114,122 +123,117 @@ def subtitle_to_voice():
 
     if request.method == "POST":
 
-        progress_data["percent"] = 0
+        try:
+            progress_data["percent"] = 0
+            cancel_flag["stop"] = False
 
-        file = request.files.get("subtitle_file")
-        voice = request.form.get("voice")
+            file = request.files.get("subtitle_file")
+            voice = request.form.get("voice")
 
-        if not file:
-            return "No subtitle file uploaded", 400
+            if not file:
+                return jsonify({"error": "No file uploaded"}), 400
 
-        content = file.read().decode("utf-8").replace("\r\n", "\n")
+            content = file.read().decode("utf-8").replace("\r\n", "\n")
 
-        pattern = re.compile(
-            r"\d+\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n(.+?)(?=\n\d+\n|\Z)",
-            re.DOTALL
-        )
+            pattern = re.compile(
+                r"\d+\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n(.+?)(?=\n\d+\n|\Z)",
+                re.DOTALL
+            )
 
-        matches = pattern.findall(content)
+            matches = pattern.findall(content)
 
-        grouped_matches = group_subtitles(matches, chunk_size=5)
+            if not matches:
+                return jsonify({"error": "Invalid SRT file"}), 400
 
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        voices_dir = os.path.join(base_dir, "static", "voices")
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            voices_dir = os.path.join(base_dir, "static", "voices")
+            os.makedirs(voices_dir, exist_ok=True)
 
-        os.makedirs(voices_dir, exist_ok=True)
+            output_path = os.path.join(voices_dir, "output.mp3")
 
-        output_path = os.path.join(voices_dir, "output.mp3")
+            if os.path.exists(output_path):
+                os.remove(output_path)
 
-        if os.path.exists(output_path):
-            os.remove(output_path)
+            final_audio = AudioSegment.silent(duration=0)
+            extracted_text = []
 
-        final_audio = AudioSegment.silent(duration=0)
-        extracted_text_list = []
+            total = len(matches)
 
-        total = len(grouped_matches)
-        processed = 0
+            for i, m in enumerate(matches):
 
-        for i, group in enumerate(grouped_matches):
+                if cancel_flag["stop"]:
+                    progress_data["percent"] = 0
+                    return jsonify({"status": "cancelled"})
 
-            combined_text = " ".join([g[2].replace("\n", " ") for g in group])
-            start_ms = srt_time_to_ms(group[0][0])
-            end_ms = srt_time_to_ms(group[-1][1])
-            duration = end_ms - start_ms
+                # 🔥 CLEAN TEXT (VERY IMPORTANT)
+                text = m[2].replace("\n", " ").strip()
+                text = re.sub(r"[^\w\s.,!?'-]", "", text)
 
-            extracted_text_list.append(combined_text)
+                if not text:
+                    continue
 
-            temp_path = os.path.join(voices_dir, f"temp_{i}.mp3")
+                extracted_text.append(text)
 
-            success = False
+                start_ms = srt_time_to_ms(m[0])
+                end_ms = srt_time_to_ms(m[1])
+                duration = end_ms - start_ms
 
-            for attempt in range(3):
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(generate_voice(combined_text, voice, temp_path))
-                    loop.close()
+                temp_path = os.path.join(voices_dir, f"temp_{i}.mp3")
 
-                    if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-                        success = True
-                        break
+                success = False
 
-                except Exception as e:
-                    print("Retry error:", e)
-                    time.sleep(1)
+                # 🔥 RETRY SYSTEM
+                for attempt in range(3):
+                    try:
+                        asyncio.run(generate_voice(text, voice, temp_path))
 
-            if not success:
-                continue
+                        if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                            success = True
+                            break
 
-            # ✅ FIX: avoid PermissionError
-            # 🔥 ensure file exists and valid
-            if not os.path.exists(temp_path) or os.path.getsize(temp_path) < 1000:
-                print("Invalid audio skipped:", combined_text)
-                continue
+                    except Exception as e:
+                        print("Retry:", e)
+                        time.sleep(0.5)
 
-            time.sleep(0.5)  # 🔥 wait for file write complete
+                if not success:
+                    print(f"Skipping chunk {i}")
+                    continue
 
-            try:
                 speech = AudioSegment.from_mp3(temp_path)
-            except Exception as e:
-                print("Decode error, skipping:", e)
-                continue
-
-            # 🔥 safe delete
-            try:
                 os.remove(temp_path)
-            except:
-                pass
 
-            if len(final_audio) < start_ms:
-                final_audio += AudioSegment.silent(start_ms - len(final_audio))
+                # 🔥 PERFECT SYNC
+                if len(final_audio) < start_ms:
+                    final_audio += AudioSegment.silent(start_ms - len(final_audio))
 
-            if len(speech) > duration:
-                speech = speech[:duration]
-            else:
-                speech += AudioSegment.silent(duration - len(speech))
+                if len(speech) > duration:
+                    speech = speech[:duration]
+                else:
+                    speech += AudioSegment.silent(duration - len(speech))
 
-            final_audio += speech
+                final_audio += speech
 
-            processed += 1
-            progress_data["percent"] = int((processed / total) * 100)
+                progress_data["percent"] = int(((i + 1) / total) * 100)
 
-        progress_data["percent"] = 100
+            progress_data["percent"] = 100
 
-        if len(final_audio) < 1000:
-            return "Audio generation failed ❌", 500
+            if len(final_audio) < 500:
+                return jsonify({"error": "Final audio too small"}), 500
 
-        final_audio.export(output_path, format="mp3")
+            final_audio.export(output_path, format="mp3")
 
-        # ✅ FIX: retain selected voice
-        return render_template(
-            "subtitle.html",
-            extracted_text=" ".join(extracted_text_list),
-            audio_file="voices/output.mp3",
-            selected_voice=voice
-        )
+            return jsonify({
+                "text": " ".join(extracted_text),
+                "audio": "voices/output.mp3",
+                "voice": voice
+            })
+
+        except Exception as e:
+            print("🔥 FULL ERROR:", str(e))
+            return jsonify({"error": str(e)}), 500
 
     return render_template("subtitle.html")
-    
+
 
 # ---------------- LOGOUT ----------------
 @main.route("/logout")

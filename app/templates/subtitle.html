@@ -8,7 +8,6 @@
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
 
 <style>
-/* Keep your existing CSS */
 *{
 margin:0;
 padding:0;
@@ -35,8 +34,6 @@ align-items:center;
 }
 .logo img{
 max-height:90px;
-width:auto;
-object-fit:contain;
 }
 .back{
 text-decoration:none;
@@ -56,10 +53,6 @@ border-radius:15px;
 box-shadow:0 0 30px rgba(0,255,255,0.15);
 margin-bottom:30px;
 }
-h2{
-margin-bottom:20px;
-font-weight:500;
-}
 .upload-box{
 border:2px dashed #00f2fe;
 padding:40px;
@@ -75,7 +68,6 @@ select{
 padding:10px;
 border-radius:8px;
 border:none;
-font-size:14px;
 }
 button{
 padding:12px 25px;
@@ -86,17 +78,12 @@ color:#000;
 font-weight:600;
 cursor:pointer;
 }
-.result-section{
-margin-top:20px;
-}
 .text-output{
 background:rgba(255,255,255,0.08);
 padding:20px;
 border-radius:10px;
 max-height:250px;
 overflow-y:auto;
-font-size:14px;
-line-height:1.6;
 }
 audio{
 width:100%;
@@ -124,20 +111,17 @@ margin-top:10px;
 <form id="voice-form" enctype="multipart/form-data">
 
 <div class="voice-select">
-<label style="font-size:25px;">Select Voice:</label>
-&nbsp 
+<label style="font-size:22px;">Select Voice:</label><br><br>
+
 <select name="voice" required>
-
 <option disabled selected>Select Male Voice</option>
-
-<option value="en-US-GuyNeural" {{ 'selected' if selected_voice=='en-US-GuyNeural' else '' }}>Guy (US)</option>
-<option value="en-US-DavisNeural" {{ 'selected' if selected_voice=='en-US-DavisNeural' else '' }}>Davis (US)</option>
-<option value="en-US-TonyNeural" {{ 'selected' if selected_voice=='en-US-TonyNeural' else '' }}>Tony (US)</option>
-<option value="en-GB-RyanNeural" {{ 'selected' if selected_voice=='en-GB-RyanNeural' else '' }}>Ryan (UK)</option>
-<option value="en-GB-ThomasNeural" {{ 'selected' if selected_voice=='en-GB-ThomasNeural' else '' }}>Thomas (UK)</option>
-<option value="en-AU-WilliamNeural" {{ 'selected' if selected_voice=='en-AU-WilliamNeural' else '' }}>William (AU)</option>
-<option value="en-IN-PrabhatNeural" {{ 'selected' if selected_voice=='en-IN-PrabhatNeural' else '' }}>Prabhat (India)</option>
-
+<option value="en-US-GuyNeural">Guy (US)</option>
+<option value="en-US-DavisNeural">Davis (US)</option>
+<option value="en-US-TonyNeural">Tony (US)</option>
+<option value="en-GB-RyanNeural">Ryan (UK)</option>
+<option value="en-GB-ThomasNeural">Thomas (UK)</option>
+<option value="en-AU-WilliamNeural">William (AU)</option>
+<option value="en-IN-PrabhatNeural">Prabhat (India)</option>
 </select>
 </div>
 
@@ -146,120 +130,152 @@ margin-top:10px;
 <input type="file" name="subtitle_file" accept=".srt" required>
 </div>
 
-<div style="text-align:center;">
-<button type="submit">Generate Voice</button>
+<!-- ✅ BUTTONS -->
+<div style="text-align:center; display:flex; justify-content:center; gap:15px;">
+<button type="submit" id="generate-btn">🎧 Generate Audio</button>
+
+<!-- 🔥 CANCEL HIDDEN DEFAULT -->
+<button type="button" id="cancel-btn" onclick="cancelProcess()" style="display:none;">
+❌ Cancel
+</button>
 </div>
 
 </form>
-<!-- 🔥 PROGRESS BAR -->
+
+<div id="result-container"></div>
+
+<!-- PROGRESS -->
 <div id="progress-container" style="display:none; margin-top:25px; text-align:center;">
+<h3>Generating Audio...</h3>
 
-    <h3 style="margin-bottom:10px;">Generating Audio...</h3>
+<div style="width:100%;height:20px;background:rgba(255,255,255,0.1);border-radius:10px;overflow:hidden;">
+<div id="progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#00f2fe,#4facfe);"></div>
+</div>
 
-    <div style="
-        width:100%;
-        height:20px;
-        background:rgba(255,255,255,0.1);
-        border-radius:10px;
-        overflow:hidden;
-    ">
-        <div id="progress-bar" style="
-            height:100%;
-            width:0%;
-            background:linear-gradient(90deg,#00f2fe,#4facfe);
-            transition:width 0.3s ease;
-        "></div>
-    </div>
+<p style="margin-top:10px;">
+<span id="progress-text">0%</span>
+</p>
+</div>
 
-    <p style="margin-top:10px;">
-        <span id="progress-text">0%</span>
-    </p>
-
+</div>
 </div>
 
 <script>
+let controller;
+
+function refreshPage() {
+    location.reload();
+}
+
+function cancelProcess() {
+
+    if (controller) {
+        controller.abort();
+    }
+
+    fetch("/cancel", { method: "POST" })
+    .then(() => {
+        location.reload();
+    });
+}
 
 const form = document.getElementById("voice-form");
 const progressContainer = document.getElementById("progress-container");
 const progressBar = document.getElementById("progress-bar");
 const progressText = document.getElementById("progress-text");
+const resultContainer = document.getElementById("result-container");
 
-// ✅ submit without reload
+const cancelBtn = document.getElementById("cancel-btn");
+const generateBtn = document.getElementById("generate-btn");
+
 form.addEventListener("submit", async (e) => {
-    e.preventDefault(); // 🔥 VERY IMPORTANT
+    e.preventDefault();
+
+    controller = new AbortController();
 
     progressContainer.style.display = "block";
 
+    // 🔥 SHOW cancel button
+    cancelBtn.style.display = "inline-block";
+
+    // 🔥 DISABLE generate button
+    generateBtn.disabled = true;
+
     const formData = new FormData(form);
 
-    // 🔥 start request (background)
     fetch("/subtitle-to-voice", {
         method: "POST",
-        body: formData
+        body: formData,
+        signal: controller.signal
     })
-    .then(res => res.text())
-    .then(html => {
-        document.open();
-        document.write(html);
-        document.close();
-    });
+    .then(res => res.json().then(data => {
+        if (!res.ok) throw new Error(data.error || "Server Error");
+        return data;
+    }))
+    .then(data => {
 
+        progressContainer.style.display = "none";
+
+        // 🔥 HIDE cancel button
+        cancelBtn.style.display = "none";
+
+        // 🔥 ENABLE generate button
+        generateBtn.disabled = false;
+
+        resultContainer.innerHTML = `
+        <div class="card">
+            <h3>Extracted Text</h3>
+            <div class="text-output">${data.text}</div>
+        </div>
+
+        <div class="card">
+            <h3>Generated Audio</h3>
+            <audio controls>
+                <source src="/static/${data.audio}" type="audio/mpeg">
+            </audio>
+
+            <br><br>
+
+            <div style="display:flex; justify-content:center; gap:15px;">
+                <a href="/static/${data.audio}" download>
+                    <button>⬇️ Download Audio</button>
+                </a>
+
+                <button onclick="refreshPage()">🔄 Generate New</button>
+            </div>
+        </div>
+        `;
+    })
+    .catch(err => {
+
+        // 🔥 HIDE cancel button
+        cancelBtn.style.display = "none";
+
+        // 🔥 ENABLE generate button
+        generateBtn.disabled = false;
+
+        if (err.name === "AbortError") {
+            console.log("Request cancelled");
+        } else {
+            alert("Error: " + err.message);
+        }
+
+        progressContainer.style.display = "none";
+    });
 });
 
-// ✅ progress updater
+// progress updater
 setInterval(() => {
     fetch("/progress")
     .then(res => res.json())
     .then(data => {
-
-        let percent = data.percent;
-
-        progressBar.style.width = percent + "%";
-        progressText.innerText = percent + "%";
-
-        if (percent === 100) {
-            setTimeout(() => {
-                progressContainer.style.display = "none";
-            }, 2000);
-        }
-
+        progressBar.style.width = data.percent + "%";
+        progressText.innerText = data.percent + "%";
     })
     .catch(() => {});
-
 }, 1000);
 
 </script>
-
-</div>
-
-{% if extracted_text %}
-<div class="card result-section">
-<h3>Extracted Text</h3>
-<div class="text-output">
-{{ extracted_text }}
-</div>
-</div>
-{% endif %}
-
-{% if audio_file %}
-<div class="card result-section">
-
-<h3>Generated Audio</h3>
-
-<audio controls>
-<source src="{{ url_for('static', filename=audio_file) }}" type="audio/mpeg">
-</audio>
-
-<br><br>
-
-<a href="{{ url_for('static', filename=audio_file) }}" download>
-<button>Download Audio</button>
-</a>
-
-</div>
-{% endif %}
-
-</div>
 
 </body>
 </html>
