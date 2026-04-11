@@ -1,243 +1,281 @@
-from flask import Blueprint, render_template, redirect, url_for, request, jsonify
-from flask_login import login_user, login_required, logout_user, current_user
-from .models import User
-from . import db
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Subtitle to Voice - D Lab</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+<style>
+*{
+margin:0;
+padding:0;
+box-sizing:border-box;
+font-family:'Poppins',sans-serif;
+}
+body{
+min-height:100vh;
+background:linear-gradient(135deg,#000000,#0f2027,#203a43);
+color:#fff;
+}
+.navbar{
+height:70px;
+display:flex;
+justify-content:space-between;
+align-items:center;
+padding:0 40px;
+background:rgba(255,255,255,0.05);
+backdrop-filter:blur(10px);
+}
+.logo{
+display:flex;
+align-items:center;
+}
+.logo img{
+max-height:90px;
+}
+.back{
+text-decoration:none;
+color:#00f2fe;
+font-weight:500;
+}
+.container{
+max-width:900px;
+margin:40px auto;
+padding:20px;
+}
+.card{
+background:rgba(255,255,255,0.05);
+backdrop-filter:blur(15px);
+padding:40px;
+border-radius:15px;
+box-shadow:0 0 30px rgba(0,255,255,0.15);
+margin-bottom:30px;
+}
+.upload-box{
+border:2px dashed #00f2fe;
+padding:40px;
+text-align:center;
+border-radius:12px;
+margin-bottom:20px;
+}
+.voice-select{
+margin-bottom:20px;
+text-align:center;
+}
+select{
+padding:10px;
+border-radius:8px;
+border:none;
+}
+button{
+padding:12px 25px;
+border-radius:8px;
+border:none;
+background:linear-gradient(90deg,#00f2fe,#4facfe);
+color:#000;
+font-weight:600;
+cursor:pointer;
+}
+.text-output{
+background:rgba(255,255,255,0.08);
+padding:20px;
+border-radius:10px;
+max-height:250px;
+overflow-y:auto;
+}
+audio{
+width:100%;
+margin-top:10px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="navbar">
+<div class="logo">
+<img src="{{ url_for('static', filename='aiRat_1.webp') }}">
+<b>AI Rat</b>
+</div>
+<a href="/logout" class="back">Logout</a>
+</div>
 
-import os
-import re
-import asyncio
-import platform
-import time
-import edge_tts
-from pydub import AudioSegment
+<div class="container">
 
-# ffmpeg setup
-if platform.system() == "Windows":
-    AudioSegment.converter = "ffmpeg"
-else:
-    AudioSegment.converter = "/usr/bin/ffmpeg"
+<div class="card">
 
-main = Blueprint("main", __name__)
+<h2>Subtitle to Voice Tool 🎙</h2>
 
-progress_data = {"percent": 0}
-cancel_flag = {"stop": False}
+<form id="voice-form" enctype="multipart/form-data">
 
+<div class="voice-select">
+<label style="font-size:22px;">Select Voice:</label><br><br>
 
-# ---------------- PROGRESS ----------------
-@main.route("/progress")
-def progress():
-    return jsonify(progress_data)
+<select name="voice" required>
+<option disabled selected>Select Male Voice</option>
+<option value="en-US-GuyNeural">Guy (US)</option>
+<option value="en-US-DavisNeural">Davis (US)</option>
+<option value="en-US-TonyNeural">Tony (US)</option>
+<option value="en-GB-RyanNeural">Ryan (UK)</option>
+<option value="en-GB-ThomasNeural">Thomas (UK)</option>
+<option value="en-AU-WilliamNeural">William (AU)</option>
+<option value="en-IN-PrabhatNeural">Prabhat (India)</option>
+</select>
+</div>
 
+<div class="upload-box">
+<p>Upload your .SRT subtitle file</p>
+<input type="file" name="subtitle_file" accept=".srt" required>
+</div>
 
-# ---------------- CANCEL ----------------
-@main.route("/cancel", methods=["POST"])
-def cancel():
-    cancel_flag["stop"] = True
-    return jsonify({"status": "cancelled"})
+<!-- ✅ BUTTONS -->
+<div style="text-align:center; display:flex; justify-content:center; gap:15px;">
+<button type="submit" id="generate-btn">🎧 Generate Audio</button>
 
+<!-- 🔥 CANCEL HIDDEN DEFAULT -->
+<button type="button" id="cancel-btn" onclick="cancelProcess()" style="display:none;">
+❌ Cancel
+</button>
+</div>
 
-@main.route("/")
-def home():
-    return redirect(url_for("main.login"))
+</form>
 
+<div id="result-container"></div>
 
-# ---------------- AUTH ----------------
-@main.route("/signup", methods=["GET", "POST"])
-def signup():
-    if request.method == "POST":
-        email = request.form.get("email")
-        password = request.form.get("password")
+<!-- PROGRESS -->
+<div id="progress-container" style="display:none; margin-top:25px; text-align:center;">
+<h3>Generating Audio...</h3>
+
+<div style="width:100%;height:20px;background:rgba(255,255,255,0.1);border-radius:10px;overflow:hidden;">
+<div id="progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#00f2fe,#4facfe);"></div>
+</div>
 
-        if User.query.filter_by(email=email).first():
-            return "User already exists"
+<p style="margin-top:10px;">
+<span id="progress-text">0%</span>
+</p>
+</div>
 
-        user = User(email=email)
-        user.set_password(password)
-        db.session.add(user)
-        db.session.commit()
+</div>
+</div>
+
+<script>
+let controller;
 
-        return redirect(url_for("main.login"))
+function refreshPage() {
+    location.reload();
+}
 
-    return render_template("signup.html")
-
-
-@main.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        email = request.form.get("email")
-        password = request.form.get("password")
-
-        user = User.query.filter_by(email=email).first()
-
-        if user and user.check_password(password):
-            login_user(user)
-            return redirect(url_for("main.dashboard"))
-
-        return "Invalid credentials"
-
-    return render_template("login.html")
-
-
-@main.route("/dashboard")
-@login_required
-def dashboard():
-    return render_template("dashboard.html", email=current_user.email)
-
-
-# -------- TIME --------
-def srt_time_to_ms(time_str):
-    h, m, s_ms = time_str.split(":")
-    s, ms = s_ms.split(",")
-    return (int(h)*3600 + int(m)*60 + int(s))*1000 + int(ms)
-
-
-# -------- EDGE TTS --------
-async def generate_voice(text, voice, path):
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(path)
-
-
-# -------- GROUP --------
-def group_subtitles(matches, chunk_size=1):  # 🔥 IMPORTANT: 1 for perfect sync
-    grouped = []
-    chunk = []
-
-    for m in matches:
-        if m[2].strip():
-            chunk.append(m)
-
-        if len(chunk) == chunk_size:
-            grouped.append(chunk)
-            chunk = []
-
-    if chunk:
-        grouped.append(chunk)
-
-    return grouped
-
-
-# ---------------- MAIN FEATURE ----------------
-@main.route("/subtitle-to-voice", methods=["GET", "POST"])
-@login_required
-def subtitle_to_voice():
-
-    if request.method == "POST":
-
-        try:
-            progress_data["percent"] = 0
-            cancel_flag["stop"] = False
-
-            file = request.files.get("subtitle_file")
-            voice = request.form.get("voice")
-
-            if not file:
-                return jsonify({"error": "No file uploaded"}), 400
-
-            content = file.read().decode("utf-8").replace("\r\n", "\n")
-
-            pattern = re.compile(
-                r"\d+\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n(.+?)(?=\n\d+\n|\Z)",
-                re.DOTALL
-            )
-
-            matches = pattern.findall(content)
-
-            if not matches:
-                return jsonify({"error": "Invalid SRT file"}), 400
-
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            voices_dir = os.path.join(base_dir, "static", "voices")
-            os.makedirs(voices_dir, exist_ok=True)
-
-            output_path = os.path.join(voices_dir, "output.mp3")
-
-            if os.path.exists(output_path):
-                os.remove(output_path)
-
-            final_audio = AudioSegment.silent(duration=0)
-            extracted_text = []
-
-            total = len(matches)
-
-            for i, m in enumerate(matches):
-
-                if cancel_flag["stop"]:
-                    progress_data["percent"] = 0
-                    return jsonify({"status": "cancelled"})
-
-                # 🔥 CLEAN TEXT (VERY IMPORTANT)
-                text = m[2].replace("\n", " ").strip()
-                text = re.sub(r"[^\w\s.,!?'-]", "", text)
-
-                if not text:
-                    continue
-
-                extracted_text.append(text)
-
-                start_ms = srt_time_to_ms(m[0])
-                end_ms = srt_time_to_ms(m[1])
-                duration = end_ms - start_ms
-
-                temp_path = os.path.join(voices_dir, f"temp_{i}.mp3")
-
-                success = False
-
-                # 🔥 RETRY SYSTEM
-                for attempt in range(3):
-                    try:
-                        asyncio.run(generate_voice(text, voice, temp_path))
-
-                        if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-                            success = True
-                            break
-
-                    except Exception as e:
-                        print("Retry:", e)
-                        time.sleep(0.5)
-
-                if not success:
-                    print(f"Skipping chunk {i}")
-                    continue
-
-                speech = AudioSegment.from_mp3(temp_path)
-                os.remove(temp_path)
-
-                # 🔥 PERFECT SYNC
-                if len(final_audio) < start_ms:
-                    final_audio += AudioSegment.silent(start_ms - len(final_audio))
-
-                if len(speech) > duration:
-                    speech = speech[:duration]
-                else:
-                    speech += AudioSegment.silent(duration - len(speech))
-
-                final_audio += speech
-
-                progress_data["percent"] = int(((i + 1) / total) * 100)
-
-            progress_data["percent"] = 100
-
-            if len(final_audio) < 500:
-                return jsonify({"error": "Final audio too small"}), 500
-
-            final_audio.export(output_path, format="mp3")
-
-            return jsonify({
-                "text": " ".join(extracted_text),
-                "audio": "voices/output.mp3",
-                "voice": voice
-            })
-
-        except Exception as e:
-            print("🔥 FULL ERROR:", str(e))
-            return jsonify({"error": str(e)}), 500
-
-    return render_template("subtitle.html")
-
-
-# ---------------- LOGOUT ----------------
-@main.route("/logout")
-@login_required
-def logout():
-    logout_user()
-    return redirect(url_for("main.login"))
+function cancelProcess() {
+
+    if (controller) {
+        controller.abort();
+    }
+
+    fetch("/cancel", { method: "POST" })
+    .then(() => {
+        location.reload();
+    });
+}
+
+const form = document.getElementById("voice-form");
+const progressContainer = document.getElementById("progress-container");
+const progressBar = document.getElementById("progress-bar");
+const progressText = document.getElementById("progress-text");
+const resultContainer = document.getElementById("result-container");
+
+const cancelBtn = document.getElementById("cancel-btn");
+const generateBtn = document.getElementById("generate-btn");
+
+form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    controller = new AbortController();
+
+    progressContainer.style.display = "block";
+
+    // 🔥 SHOW cancel button
+    cancelBtn.style.display = "inline-block";
+
+    // 🔥 DISABLE generate button
+    generateBtn.disabled = true;
+
+    const formData = new FormData(form);
+
+    fetch("/subtitle-to-voice", {
+        method: "POST",
+        body: formData,
+        signal: controller.signal
+    })
+    .then(res => res.json().then(data => {
+        if (!res.ok) throw new Error(data.error || "Server Error");
+        return data;
+    }))
+    .then(data => {
+
+        progressContainer.style.display = "none";
+
+        // 🔥 HIDE cancel button
+        cancelBtn.style.display = "none";
+
+        // 🔥 ENABLE generate button
+        generateBtn.disabled = false;
+
+        resultContainer.innerHTML = `
+        <div class="card">
+            <h3>Extracted Text</h3>
+            <div class="text-output">${data.text}</div>
+        </div>
+
+        <div class="card">
+            <h3>Generated Audio</h3>
+            <audio controls>
+                <source src="/static/${data.audio}" type="audio/mpeg">
+            </audio>
+
+            <br><br>
+
+            <div style="display:flex; justify-content:center; gap:15px;">
+                <a href="/static/${data.audio}" download>
+                    <button>⬇️ Download Audio</button>
+                </a>
+
+                <button onclick="refreshPage()">🔄 Generate New</button>
+            </div>
+        </div>
+        `;
+    })
+    .catch(err => {
+
+        // 🔥 HIDE cancel button
+        cancelBtn.style.display = "none";
+
+        // 🔥 ENABLE generate button
+        generateBtn.disabled = false;
+
+        if (err.name === "AbortError") {
+            console.log("Request cancelled");
+        } else {
+            alert("Error: " + err.message);
+        }
+
+        progressContainer.style.display = "none";
+    });
+});
+
+// progress updater
+setInterval(() => {
+    fetch("/progress")
+    .then(res => res.json())
+    .then(data => {
+        progressBar.style.width = data.percent + "%";
+        progressText.innerText = data.percent + "%";
+    })
+    .catch(() => {});
+}, 1000);
+
+</script>
+
+</body>
+</html>
