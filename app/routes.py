@@ -98,7 +98,7 @@ async def generate_voice(text, voice, path):
 
 
 # -------- GROUP --------
-def group_subtitles(matches, chunk_size=1):  # 🔥 IMPORTANT: 1 for perfect sync
+def group_subtitles(matches, chunk_size=1):
     grouped = []
     chunk = []
 
@@ -165,7 +165,6 @@ def subtitle_to_voice():
                     progress_data["percent"] = 0
                     return jsonify({"status": "cancelled"})
 
-                # 🔥 CLEAN TEXT (VERY IMPORTANT)
                 text = m[2].replace("\n", " ").strip()
                 text = re.sub(r"[^\w\s.,!?'-]", "", text)
 
@@ -182,7 +181,6 @@ def subtitle_to_voice():
 
                 success = False
 
-                # 🔥 RETRY SYSTEM
                 for attempt in range(3):
                     try:
                         asyncio.run(generate_voice(text, voice, temp_path))
@@ -202,7 +200,6 @@ def subtitle_to_voice():
                 speech = AudioSegment.from_mp3(temp_path)
                 os.remove(temp_path)
 
-                # 🔥 PERFECT SYNC
                 if len(final_audio) < start_ms:
                     final_audio += AudioSegment.silent(start_ms - len(final_audio))
 
