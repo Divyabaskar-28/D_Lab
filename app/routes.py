@@ -97,23 +97,50 @@ async def generate_voice(text, voice, path):
     await communicate.save(path)
 
 
-# -------- GROUP --------
-def group_subtitles(matches, chunk_size=1):  # 🔥 IMPORTANT: 1 for perfect sync
-    grouped = []
-    chunk = []
+# -------- ASYNC PROCESSOR --------
+async def process_tts(matches, voice, voices_dir):
+    results = []
+    total = len(matches)
 
-    for m in matches:
-        if m[2].strip():
-            chunk.append(m)
+    for i, m in enumerate(matches):
 
-        if len(chunk) == chunk_size:
-            grouped.append(chunk)
-            chunk = []
+        if cancel_flag["stop"]:
+            return None
 
-    if chunk:
-        grouped.append(chunk)
+        text = m[2].replace("\n", " ").strip()
+        text = re.sub(r"[^\w\s.,!?'-]", "", text)
 
-    return grouped
+        if not text:
+            continue
+
+        temp_path = os.path.join(voices_dir, f"temp_{i}.mp3")
+
+        success = False
+
+        for attempt in range(3):
+            try:
+                await asyncio.wait_for(
+                    generate_voice(text, voice, temp_path),
+                    timeout=15
+                )
+
+                if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                    success = True
+                    break
+
+            except Exception as e:
+                print("Retry:", e)
+                await asyncio.sleep(0.5)
+
+        if not success:
+            print(f"Skipping chunk {i}")
+            continue
+
+        results.append((i, temp_path, m, text))
+
+        progress_data["percent"] = int(((i + 1) / total) * 100)
+
+    return results
 
 
 # ---------------- MAIN FEATURE ----------------
@@ -154,23 +181,24 @@ def subtitle_to_voice():
             if os.path.exists(output_path):
                 os.remove(output_path)
 
+            # ✅ SINGLE EVENT LOOP
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            results = loop.run_until_complete(
+                process_tts(matches, voice, voices_dir)
+            )
+
+            loop.close()
+
+            if results is None:
+                progress_data["percent"] = 0
+                return jsonify({"status": "cancelled"})
+
             final_audio = AudioSegment.silent(duration=0)
             extracted_text = []
 
-            total = len(matches)
-
-            for i, m in enumerate(matches):
-
-                if cancel_flag["stop"]:
-                    progress_data["percent"] = 0
-                    return jsonify({"status": "cancelled"})
-
-                # 🔥 CLEAN TEXT (VERY IMPORTANT)
-                text = m[2].replace("\n", " ").strip()
-                text = re.sub(r"[^\w\s.,!?'-]", "", text)
-
-                if not text:
-                    continue
+            for i, temp_path, m, text in results:
 
                 extracted_text.append(text)
 
@@ -178,31 +206,9 @@ def subtitle_to_voice():
                 end_ms = srt_time_to_ms(m[1])
                 duration = end_ms - start_ms
 
-                temp_path = os.path.join(voices_dir, f"temp_{i}.mp3")
-
-                success = False
-
-                # 🔥 RETRY SYSTEM
-                for attempt in range(3):
-                    try:
-                        asyncio.run(generate_voice(text, voice, temp_path))
-
-                        if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-                            success = True
-                            break
-
-                    except Exception as e:
-                        print("Retry:", e)
-                        time.sleep(0.5)
-
-                if not success:
-                    print(f"Skipping chunk {i}")
-                    continue
-
                 speech = AudioSegment.from_mp3(temp_path)
                 os.remove(temp_path)
 
-                # 🔥 PERFECT SYNC
                 if len(final_audio) < start_ms:
                     final_audio += AudioSegment.silent(start_ms - len(final_audio))
 
@@ -212,8 +218,6 @@ def subtitle_to_voice():
                     speech += AudioSegment.silent(duration - len(speech))
 
                 final_audio += speech
-
-                progress_data["percent"] = int(((i + 1) / total) * 100)
 
             progress_data["percent"] = 100
 
