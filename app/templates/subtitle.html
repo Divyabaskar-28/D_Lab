@@ -108,6 +108,8 @@ margin-top:10px;
 
 <h2>Subtitle to Voice Tool 🎙</h2>
 
+<!-- ONLY CHANGED PARTS SHOWN FULL -->
+
 <form id="voice-form" enctype="multipart/form-data">
 
 <div class="voice-select">
@@ -130,18 +132,15 @@ margin-top:10px;
 <input type="file" name="subtitle_file" accept=".srt" required>
 </div>
 
-<!-- ✅ BUTTONS -->
+<!-- 🔥 BUTTONS SIDE BY SIDE -->
 <div style="text-align:center; display:flex; justify-content:center; gap:15px;">
-<button type="submit" id="generate-btn">🎧 Generate Audio</button>
-
-<!-- 🔥 CANCEL HIDDEN DEFAULT -->
-<button type="button" id="cancel-btn" onclick="cancelProcess()" style="display:none;">
-❌ Cancel
-</button>
+<button type="submit">🎧 Generate Audio</button>
+<button type="button" onclick="cancelProcess()">❌ Cancel</button>
 </div>
 
 </form>
 
+<!-- RESULT -->
 <div id="result-container"></div>
 
 <!-- PROGRESS -->
@@ -161,7 +160,7 @@ margin-top:10px;
 </div>
 
 <script>
-let controller;
+let controller; // 🔥 global controller
 
 function refreshPage() {
     location.reload();
@@ -169,14 +168,17 @@ function refreshPage() {
 
 function cancelProcess() {
 
+    // 🔥 stop frontend request
     if (controller) {
         controller.abort();
     }
 
+    // 🔥 stop backend process
     fetch("/cancel", { method: "POST" })
     .then(() => {
-        location.reload();
+        location.reload(); // refresh UI
     });
+
 }
 
 const form = document.getElementById("voice-form");
@@ -185,42 +187,29 @@ const progressBar = document.getElementById("progress-bar");
 const progressText = document.getElementById("progress-text");
 const resultContainer = document.getElementById("result-container");
 
-const cancelBtn = document.getElementById("cancel-btn");
-const generateBtn = document.getElementById("generate-btn");
-
 form.addEventListener("submit", async (e) => {
     e.preventDefault();
 
-    controller = new AbortController();
+    controller = new AbortController(); // 🔥 create controller
 
     progressContainer.style.display = "block";
-
-    // 🔥 SHOW cancel button
-    cancelBtn.style.display = "inline-block";
-
-    // 🔥 DISABLE generate button
-    generateBtn.disabled = true;
 
     const formData = new FormData(form);
 
     fetch("/subtitle-to-voice", {
         method: "POST",
         body: formData,
-        signal: controller.signal
+        signal: controller.signal // 🔥 attach signal
     })
-    .then(res => res.json().then(data => {
+    .then(res => {
+    return res.json().then(data => {
         if (!res.ok) throw new Error(data.error || "Server Error");
         return data;
-    }))
+    });
+})
     .then(data => {
 
         progressContainer.style.display = "none";
-
-        // 🔥 HIDE cancel button
-        cancelBtn.style.display = "none";
-
-        // 🔥 ENABLE generate button
-        generateBtn.disabled = false;
 
         resultContainer.innerHTML = `
         <div class="card">
@@ -245,14 +234,9 @@ form.addEventListener("submit", async (e) => {
             </div>
         </div>
         `;
+
     })
     .catch(err => {
-
-        // 🔥 HIDE cancel button
-        cancelBtn.style.display = "none";
-
-        // 🔥 ENABLE generate button
-        generateBtn.disabled = false;
 
         if (err.name === "AbortError") {
             console.log("Request cancelled");
@@ -262,6 +246,7 @@ form.addEventListener("submit", async (e) => {
 
         progressContainer.style.display = "none";
     });
+
 });
 
 // progress updater
