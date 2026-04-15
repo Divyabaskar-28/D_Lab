@@ -11,13 +11,13 @@ import time
 import edge_tts
 from pydub import AudioSegment
 
-# ffmpeg setup
+main = Blueprint("main", __name__)
+
+# ---------------- FFmpeg SETUP ----------------
 if platform.system() == "Windows":
     AudioSegment.converter = "ffmpeg"
 else:
     AudioSegment.converter = "/usr/bin/ffmpeg"
-
-main = Blueprint("main", __name__)
 
 progress_data = {"percent": 0}
 cancel_flag = {"stop": False}
@@ -84,63 +84,27 @@ def dashboard():
     return render_template("dashboard.html", email=current_user.email)
 
 
-# -------- TIME --------
+# ---------------- TIME ----------------
 def srt_time_to_ms(time_str):
     h, m, s_ms = time_str.split(":")
     s, ms = s_ms.split(",")
     return (int(h)*3600 + int(m)*60 + int(s))*1000 + int(ms)
 
 
-# -------- EDGE TTS --------
-async def generate_voice(text, voice, path):
-    communicate = edge_tts.Communicate(text, voice)
+# ---------------- EDGE TTS SAFE ----------------
+async def generate_voice_async(text, voice, path):
+    communicate = edge_tts.Communicate(text=text, voice=voice)
     await communicate.save(path)
 
 
-# -------- ASYNC PROCESSOR --------
-async def process_tts(matches, voice, voices_dir):
-    results = []
-    total = len(matches)
-
-    for i, m in enumerate(matches):
-
-        if cancel_flag["stop"]:
-            return None
-
-        text = m[2].replace("\n", " ").strip()
-        text = re.sub(r"[^\w\s.,!?'-]", "", text)
-
-        if not text:
-            continue
-
-        temp_path = os.path.join(voices_dir, f"temp_{i}.mp3")
-
-        success = False
-
-        for attempt in range(3):
-            try:
-                await asyncio.wait_for(
-                    generate_voice(text, voice, temp_path),
-                    timeout=15
-                )
-
-                if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-                    success = True
-                    break
-
-            except Exception as e:
-                print("Retry:", e)
-                await asyncio.sleep(0.5)
-
-        if not success:
-            print(f"Skipping chunk {i}")
-            continue
-
-        results.append((i, temp_path, m, text))
-
-        progress_data["percent"] = int(((i + 1) / total) * 100)
-
-    return results
+def generate_voice(text, voice, path):
+    try:
+        asyncio.run(generate_voice_async(text, voice, path))
+    except RuntimeError:
+        # 🔥 FIX: event loop closed issue
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(generate_voice_async(text, voice, path))
 
 
 # ---------------- MAIN FEATURE ----------------
@@ -181,36 +145,53 @@ def subtitle_to_voice():
             if os.path.exists(output_path):
                 os.remove(output_path)
 
-            # ✅ SINGLE EVENT LOOP
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-            results = loop.run_until_complete(
-                process_tts(matches, voice, voices_dir)
-            )
-
-            loop.close()
-
-            if results is None:
-                progress_data["percent"] = 0
-                return jsonify({"status": "cancelled"})
-
             final_audio = AudioSegment.silent(duration=0)
             extracted_text = []
 
-            for i, temp_path, m, text in results:
+            total = len(matches)
 
-                extracted_text.append(text)
+            for i, m in enumerate(matches):
+
+                if cancel_flag["stop"]:
+                    progress_data["percent"] = 0
+                    return jsonify({"status": "cancelled"})
+
+                text = m[2].replace("\n", " ").strip()
+
+                if not text:
+                    continue
 
                 start_ms = srt_time_to_ms(m[0])
                 end_ms = srt_time_to_ms(m[1])
                 duration = end_ms - start_ms
 
-                speech = AudioSegment.from_mp3(temp_path)
+                temp_path = os.path.join(voices_dir, f"temp_{i}.mp3")
+
+                success = False
+
+                # 🔥 STRONG RETRY
+                for attempt in range(5):
+                    try:
+                        generate_voice(text, voice, temp_path)
+
+                        if os.path.exists(temp_path) and os.path.getsize(temp_path) > 1000:
+                            success = True
+                            break
+
+                    except Exception as e:
+                        print("Retry:", e)
+                        time.sleep(1.5)
+
+                if not success:
+                    print(f"Skipped {i}")
+                    continue
+
+                speech = AudioSegment.from_file(temp_path)
                 os.remove(temp_path)
 
+                # 🔥 PERFECT SYNC
                 if len(final_audio) < start_ms:
-                    final_audio += AudioSegment.silent(start_ms - len(final_audio))
+                    final_audio += AudioSegment.silent(duration=start_ms - len(final_audio))
 
                 if len(speech) > duration:
                     speech = speech[:duration]
@@ -218,13 +199,16 @@ def subtitle_to_voice():
                     speech += AudioSegment.silent(duration - len(speech))
 
                 final_audio += speech
+                extracted_text.append(text)
+
+                progress_data["percent"] = int(((i + 1) / total) * 100)
+
+            if len(final_audio) < 1000:
+                return jsonify({"error": "Audio generation failed"}), 500
+
+            final_audio.export(output_path, format="mp3", bitrate="192k")
 
             progress_data["percent"] = 100
-
-            if len(final_audio) < 500:
-                return jsonify({"error": "Final audio too small"}), 500
-
-            final_audio.export(output_path, format="mp3")
 
             return jsonify({
                 "text": " ".join(extracted_text),
