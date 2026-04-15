@@ -110,7 +110,7 @@ margin-top:10px;
 
 <!-- ONLY CHANGED PARTS SHOWN FULL -->
 
-<form id="voice-form" enctype="multipart/form-data">
+<form id="voice-form" enctype="multipart/form-data" autocomplete="off">
 
 <div class="voice-select">
 <label style="font-size:22px;">Select Voice:</label><br><br>
@@ -175,6 +175,7 @@ function cancelProcess() {
     // 🔥 stop backend process
     fetch("/cancel", { method: "POST" })
     .then(() => {
+         document.querySelector("select[name='voice']").selectedIndex = 0;
         location.reload(); // refresh UI
     });
 
@@ -190,6 +191,8 @@ form.addEventListener("submit", async (e) => {
     e.preventDefault();
 
     controller = new AbortController(); // 🔥 create controller
+    progressBar.style.width = "0%";
+    progressText.innerText = "0%";
 
     progressContainer.style.display = "block";
 
