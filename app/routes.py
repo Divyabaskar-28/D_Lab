@@ -19,20 +19,33 @@ if platform.system() == "Windows":
 else:
     AudioSegment.converter = "/usr/bin/ffmpeg"
 
-progress_data = {"percent": 0}
+# ✅ FILE BASED PROGRESS (FIX)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROGRESS_FILE = os.path.join(BASE_DIR, "progress.txt")
+
 cancel_flag = {"stop": False}
 
 
 # ---------------- PROGRESS ----------------
 @main.route("/progress")
 def progress():
-    return jsonify(progress_data)
+    try:
+        with open(PROGRESS_FILE, "r") as f:
+            percent = f.read()
+        return jsonify({"percent": int(percent)})
+    except:
+        return jsonify({"percent": 0})
 
 
 # ---------------- CANCEL ----------------
 @main.route("/cancel", methods=["POST"])
 def cancel():
     cancel_flag["stop"] = True
+
+    # reset progress
+    with open(PROGRESS_FILE, "w") as f:
+        f.write("0")
+
     return jsonify({"status": "cancelled"})
 
 
@@ -101,7 +114,6 @@ def generate_voice(text, voice, path):
     try:
         asyncio.run(generate_voice_async(text, voice, path))
     except RuntimeError:
-        # 🔥 FIX: event loop closed issue
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(generate_voice_async(text, voice, path))
@@ -115,7 +127,10 @@ def subtitle_to_voice():
     if request.method == "POST":
 
         try:
-            progress_data["percent"] = 0
+            # ✅ RESET PROGRESS
+            with open(PROGRESS_FILE, "w") as f:
+                f.write("0")
+
             cancel_flag["stop"] = False
 
             file = request.files.get("subtitle_file")
@@ -136,8 +151,7 @@ def subtitle_to_voice():
             if not matches:
                 return jsonify({"error": "Invalid SRT file"}), 400
 
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            voices_dir = os.path.join(base_dir, "static", "voices")
+            voices_dir = os.path.join(BASE_DIR, "static", "voices")
             os.makedirs(voices_dir, exist_ok=True)
 
             output_path = os.path.join(voices_dir, "output.mp3")
@@ -153,7 +167,8 @@ def subtitle_to_voice():
             for i, m in enumerate(matches):
 
                 if cancel_flag["stop"]:
-                    progress_data["percent"] = 0
+                    with open(PROGRESS_FILE, "w") as f:
+                        f.write("0")
                     return jsonify({"status": "cancelled"})
 
                 text = m[2].replace("\n", " ").strip()
@@ -169,7 +184,6 @@ def subtitle_to_voice():
 
                 success = False
 
-                # 🔥 STRONG RETRY
                 for attempt in range(5):
                     try:
                         generate_voice(text, voice, temp_path)
@@ -189,7 +203,7 @@ def subtitle_to_voice():
                 speech = AudioSegment.from_file(temp_path)
                 os.remove(temp_path)
 
-                # 🔥 PERFECT SYNC
+                # sync
                 if len(final_audio) < start_ms:
                     final_audio += AudioSegment.silent(duration=start_ms - len(final_audio))
 
@@ -201,14 +215,19 @@ def subtitle_to_voice():
                 final_audio += speech
                 extracted_text.append(text)
 
-                progress_data["percent"] = int(((i + 1) / total) * 100)
+                # ✅ UPDATE PROGRESS (FILE)
+                percent = int(((i + 1) / total) * 100)
+                with open(PROGRESS_FILE, "w") as f:
+                    f.write(str(percent))
 
             if len(final_audio) < 1000:
                 return jsonify({"error": "Audio generation failed"}), 500
 
             final_audio.export(output_path, format="mp3", bitrate="192k")
 
-            progress_data["percent"] = 100
+            # ✅ FINAL 100%
+            with open(PROGRESS_FILE, "w") as f:
+                f.write("100")
 
             return jsonify({
                 "text": " ".join(extracted_text),
