@@ -133,8 +133,10 @@ margin-top:10px;
 
 <!-- 🔥 BUTTONS SIDE BY SIDE -->
 <div style="text-align:center; display:flex; justify-content:center; gap:15px;">
-<button type="submit">🎧 Generate Audio</button>
-<button type="button" onclick="cancelProcess()">❌ Cancel</button>
+<button type="submit" id="generate-btn">🎧 Generate Audio</button>
+<button type="button" id="cancel-btn" onclick="cancelProcess()" style="display:none;">
+❌ Cancel
+</button>
 </div>
 
 </form>
@@ -174,10 +176,17 @@ function cancelProcess() {
 
     // 🔥 stop backend process
     fetch("/cancel", { method: "POST" })
-    .then(() => {
-         document.querySelector("select[name='voice']").selectedIndex = 0;
-        location.reload(); // refresh UI
-    });
+.then(() => {
+
+    progressContainer.style.display = "none";
+    document.getElementById("cancel-btn").style.display = "none";
+    document.getElementById("generate-btn").disabled = false;
+
+    progressBar.style.width = "0%";
+    progressText.innerText = "0%";
+
+    form.reset(); // 🔥 reset form properly
+});
 
 }
 
@@ -191,11 +200,12 @@ form.addEventListener("submit", async (e) => {
     e.preventDefault();
 
     controller = new AbortController(); // 🔥 create controller
+    document.getElementById("generate-btn").disabled = true;
     progressBar.style.width = "0%";
     progressText.innerText = "0%";
 
     progressContainer.style.display = "block";
-
+    document.getElementById("cancel-btn").style.display = "inline-block";
     const formData = new FormData(form);
 
     fetch("/subtitle-to-voice", {
@@ -212,6 +222,9 @@ form.addEventListener("submit", async (e) => {
     .then(data => {
 
         progressContainer.style.display = "none";
+        document.getElementById("cancel-btn").style.display = "none";
+
+        document.getElementById("generate-btn").disabled = false;
 
         resultContainer.innerHTML = `
         <div class="card">
@@ -238,15 +251,19 @@ form.addEventListener("submit", async (e) => {
         `;
 
     })
-    .catch(err => {
+   .catch(err => {
+
+        progressContainer.style.display = "none";
+
+        // ✅ HIDE CANCEL BUTTON
+        document.getElementById("cancel-btn").style.display = "none";
+        document.getElementById("generate-btn").disabled = false;
 
         if (err.name === "AbortError") {
             console.log("Request cancelled");
         } else {
             alert("Error: " + err.message);
         }
-
-        progressContainer.style.display = "none";
     });
 
 });
